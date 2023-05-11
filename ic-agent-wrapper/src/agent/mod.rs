@@ -13,24 +13,24 @@
 *  See the License for the specific language governing permissions and
 *  limitations under the License.
 ********************************************************************************/
-use crate::{identity::IdentityType, AnyErr, AnyResult, ResultCode, RetPtr};
+use crate::{identity::IdentityType, AnyErr, AnyResult, RetPtr};
 use anyhow::{anyhow, bail, Context};
 use candid::{
     check_prog,
     types::{Function, Type},
     CandidType, Decode, Deserialize, IDLArgs, IDLProg, Principal, TypeEnv,
 };
-use cty::{c_char, c_int, c_void};
+use cty::{c_char, c_int};
 use ic_agent::{
     agent::{http_transport::ReqwestHttpReplicaV2Transport, status::Status},
     identity::{AnonymousIdentity, Secp256k1Identity},
     Agent, Identity,
 };
-use ic_utils::interfaces::management_canister::{
+use ic_utils::{interfaces::management_canister::{
     builders::{CanisterInstall, CanisterSettings},
     MgmtMethod,
-};
-use std::str::FromStr;
+}};
+use std::{str::FromStr, ptr};
 use std::{
     ffi::{CStr, CString},
     sync::Arc,
@@ -223,23 +223,20 @@ impl FFIAgent {
 #[no_mangle]
 pub extern "C" fn agent_create_wrap(
     path: *const c_char,
-    identity: *const c_void,
+    identity: *const c_char,
     id_type: IdentityType,
-    canister_id_content: *const u8,
+    canister_id: *const u8,
     canister_id_len: c_int,
     did_content: *const c_char,
-    agent_ptr: *mut *const FFIAgent,
     error_ret: RetPtr<u8>,
-) -> ResultCode {
+) -> *mut FFIAgent {
     let computation = || -> AnyResult<FFIAgent> {
         let path = unsafe { CStr::from_ptr(path).to_str().map_err(AnyErr::from) }?.to_string();
         let did_content =
             unsafe { CStr::from_ptr(did_content).to_str().map_err(AnyErr::from) }?.to_string();
 
-        let slice =
-            unsafe { std::slice::from_raw_parts(canister_id_content, canister_id_len as usize) };
+        let slice = unsafe { std::slice::from_raw_parts(canister_id, canister_id_len as usize) };
         let canister_id = Principal::from_slice(slice);
-
         let identity = unsafe {
             match id_type {
                 IdentityType::Anonym => Arc::new(AnonymousIdentity {}) as Arc<dyn Identity>,
@@ -271,18 +268,26 @@ pub extern "C" fn agent_create_wrap(
 
     match computation() {
         Ok(agent) => {
+            // Pass empty error string to error_ret
+            let empty_error = CString::new("").expect("Failed to create empty CString");
+            let error_str = empty_error.into_raw() as *const u8;
+            let error_len = 0;
+            error_ret(error_str, error_len);
+
             let agent_tmp = Box::into_raw(Box::new(agent));
-            unsafe {
-                *agent_ptr = agent_tmp;
-            }
-            ResultCode::Ok
+            agent_tmp
         }
         Err(e) => {
-            let err_str = e.to_string() + "\0";
-            let arr = err_str.as_bytes();
-            let len = arr.len() as c_int;
-            error_ret(arr.as_ptr(), len);
-            ResultCode::Err
+            let err_str = e.to_string();
+            let c_string = CString::new(err_str.clone()).expect("Failed to convert to CString");
+
+            // Pass error string to error_ret
+            let error_str = c_string.into_raw() as *const u8;
+            let error_len = err_str.len() as c_int;
+            error_ret(error_str, error_len);
+
+            let empty_string = CString::new("").expect("Failed to create empty CString");
+            empty_string.into_raw() as *mut FFIAgent
         }
     }
 }
@@ -291,9 +296,8 @@ pub extern "C" fn agent_create_wrap(
 #[no_mangle]
 pub extern "C" fn agent_status_wrap(
     agent_ptr: *const FFIAgent,
-    status_ret: RetPtr<u8>,
     error_ret: RetPtr<u8>,
-) -> ResultCode {
+) -> *mut c_char {
     let computation = || -> AnyResult<_> {
         let agent = unsafe { Box::from_raw(agent_ptr as *mut FFIAgent) };
 
@@ -303,26 +307,34 @@ pub extern "C" fn agent_status_wrap(
         // Don't drop the [`AgentWrapper`]
         Box::into_raw(agent);
 
-        let status_cstr = CString::new(status.to_string())
-            .map_err(AnyErr::from)?
-            .into_bytes_with_nul();
+        let status_cstr = CString::new(status.to_string()).unwrap();
 
         Ok(status_cstr)
     };
 
     match computation() {
         Ok(status_cstr) => {
-            let arr = status_cstr.as_slice();
-            let len = arr.len() as c_int;
-            status_ret(arr.as_ptr(), len);
-            ResultCode::Ok
+            // Pass empty error string to error_ret
+            let empty_error = CString::new("").expect("Failed to create empty CString");
+            let error_str = empty_error.into_raw() as *const u8;
+            let error_len = 0;
+            error_ret(error_str, error_len);
+
+            let status_ptr = status_cstr.into_raw();
+            status_ptr as *mut c_char
+
         }
         Err(e) => {
-            let err_str = e.to_string() + "\0";
-            let arr = err_str.as_bytes();
-            let len = arr.len() as c_int;
-            error_ret(arr.as_ptr(), len);
-            ResultCode::Err
+            let err_str = e.to_string();
+            let c_string = CString::new(err_str.clone()).expect("Failed to convert to CString");
+
+            // Pass error string to error_ret
+            let error_str = c_string.into_raw()  as *const u8;
+            let error_len = err_str.len() as c_int;
+            error_ret(error_str, error_len);
+
+            let empty_string = CString::new("").expect("Failed to create empty CString");
+            empty_string.into_raw()
         }
     }
 }
@@ -333,9 +345,8 @@ pub extern "C" fn agent_query_wrap(
     agent_ptr: *const FFIAgent,
     method: *const c_char,
     method_args: *const c_char,
-    ret: *mut *const c_void,
     error_ret: RetPtr<u8>,
-) -> ResultCode {
+) -> *mut c_char {
     let computation = || -> AnyResult<_> {
         let agent = unsafe { Box::from_raw(agent_ptr as *mut FFIAgent) };
         let method = unsafe { CStr::from_ptr(method).to_str().map_err(AnyErr::from) }?;
@@ -349,18 +360,20 @@ pub extern "C" fn agent_query_wrap(
 
     match computation() {
         Ok(idl) => {
-            let idl_ptr: *const c_void = Box::into_raw(Box::new(idl)) as *const c_void;
-            unsafe {
-                *ret = idl_ptr;
-            }
-            ResultCode::Ok
+            // Pass empty error string to error_ret
+            let empty_error = CString::new("").expect("Failed to create empty CString");
+            let error_str = empty_error.into_raw() as *const u8;
+            let error_len = 0;
+            error_ret(error_str, error_len);
+            Box::into_raw(Box::new(idl)) as *mut c_char
         }
         Err(e) => {
-            let err_str = e.to_string() + "\0";
-            let arr = err_str.as_bytes();
-            let len = arr.len() as c_int;
-            error_ret(arr.as_ptr(), len);
-            ResultCode::Err
+            let err_str = e.to_string();
+            let c_string = CString::new(err_str.clone()).expect("Failed to convert to CString");
+            let error_str = c_string.into_raw()  as *const u8;
+            let error_len = err_str.len() as c_int;
+            error_ret(error_str, error_len);
+             ptr::null_mut()
         }
     }
 }
@@ -371,9 +384,8 @@ pub extern "C" fn agent_update_wrap(
     agent_ptr: *const FFIAgent,
     method: *const c_char,
     method_args: *const c_char,
-    ret: *mut *const c_void,
     error_ret: RetPtr<u8>,
-) -> ResultCode {
+) -> *mut c_char {
     let computation = || -> AnyResult<_> {
         let agent = unsafe { Box::from_raw(agent_ptr as *mut FFIAgent) };
         let method = unsafe { CStr::from_ptr(method).to_str().map_err(AnyErr::from) }?;
@@ -387,18 +399,29 @@ pub extern "C" fn agent_update_wrap(
 
     match computation() {
         Ok(idl) => {
-            let idl_ptr: *const c_void = Box::into_raw(Box::new(idl)) as *const c_void;
-            unsafe {
-                *ret = idl_ptr;
-            }
-            ResultCode::Ok
+            // Pass empty error string to error_ret
+            let empty_error = CString::new("").expect("Failed to create empty CString");
+            let error_str = empty_error.into_raw() as *const u8;
+            let error_len = 0;
+            error_ret(error_str, error_len);
+            Box::into_raw(Box::new(idl)) as *mut c_char
         }
         Err(e) => {
-            let err_str = e.to_string() + "\0";
-            let arr = err_str.as_bytes();
-            let len = arr.len() as c_int;
-            error_ret(arr.as_ptr(), len);
-            ResultCode::Err
+            let err_str = e.to_string();
+            let c_string = CString::new(err_str.clone()).expect("Failed to convert to CString");
+            let error_str = c_string.into_raw()  as *const u8;
+            let error_len = err_str.len() as c_int;
+            error_ret(error_str, error_len);
+            ptr::null_mut()
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn agent_free(agent: *const FFIAgent) {
+      if !agent.is_null() {
+        unsafe {
+            drop(Box::from_raw(agent as *mut FFIAgent));
         }
     }
 }
@@ -407,13 +430,14 @@ pub extern "C" fn agent_update_wrap(
 mod tests {
     #[allow(unused)]
     use super::*;
-    use crate::identity::identity_anonymous;
+    use crate::{identity::identity_anonymous, principal::{principal_anonymous, principal_from_text}};
     use libc::c_int;
+    use ring::error;
 
     const IC_PATH: &[u8] = b"http://127.0.0.1:4943\0";
-    const II_CANISTER_ID_BYTES: &[u8] = &[0, 0, 0, 0, 0, 0, 0, 1, 1, 1];
     const II_DID_CONTENT_BYTES: &[u8] =
         const_str::concat_bytes!(include_bytes!("rust_hello_backend.did"), b"\0");
+    const II_CANISTER_ID_BYTES: &[u8] = &[0, 0, 0, 0, 0, 0, 0, 1, 1, 1];
 
     fn cbytes_to_str(cbytes: &[u8]) -> &str {
         let cstr = CStr::from_bytes_with_nul(cbytes).unwrap();
@@ -421,26 +445,19 @@ mod tests {
     }
 
     extern "C" fn error_ret(_data: *const u8, _len: c_int) {}
-    extern "C" fn ret(_data: *const u8, _len: c_int) {}
 
     #[test]
     fn test_agent_create_with_anonymous() {
-        let mut identity: *const c_void = std::ptr::null();
-        identity_anonymous(&mut identity);
-        let mut agent: *const FFIAgent = std::ptr::null();
+        let identity = identity_anonymous();
 
-        assert_eq!(
-            agent_create_wrap(
-                IC_PATH.as_ptr() as *const c_char,
-                identity,
-                IdentityType::Anonym,
-                II_CANISTER_ID_BYTES.as_ptr(),
-                II_CANISTER_ID_BYTES.len() as c_int,
-                II_DID_CONTENT_BYTES.as_ptr() as *const c_char,
-                &mut agent,
-                error_ret
-            ),
-            ResultCode::Ok
+        let agent = agent_create_wrap(
+            IC_PATH.as_ptr() as *const c_char,
+            identity,
+            IdentityType::Anonym,
+            II_CANISTER_ID_BYTES.as_ptr(),
+            II_CANISTER_ID_BYTES.len() as i32,
+            II_DID_CONTENT_BYTES.as_ptr() as *mut c_char,
+            error_ret,
         );
 
         unsafe {
@@ -452,48 +469,35 @@ mod tests {
             assert_eq!(agent_ptr.identity.sender(), id.sender());
             assert_eq!(
                 agent_ptr.canister_id,
-                Principal::from_slice(II_CANISTER_ID_BYTES)
-            );
+                Principal::from_slice(II_CANISTER_ID_BYTES));
             assert_eq!(agent_ptr.did_content, cbytes_to_str(II_DID_CONTENT_BYTES));
         }
     }
 
-    #[test]
+    #[test] 
     fn test_agent_query() {
         const EXPECTED: &str = "(\"Hello, World!\")";
-        let mut identity: *const c_void = std::ptr::null();
-        identity_anonymous(&mut identity);
-        let mut agent: *const FFIAgent = std::ptr::null();
+        let identity = identity_anonymous();
 
-        assert_eq!(
-            agent_create_wrap(
-                IC_PATH.as_ptr() as *const c_char,
-                identity,
-                IdentityType::Anonym,
-                II_CANISTER_ID_BYTES.as_ptr(),
-                II_CANISTER_ID_BYTES.len() as c_int,
-                II_DID_CONTENT_BYTES.as_ptr() as *const c_char,
-                &mut agent,
-                error_ret
-            ),
-            ResultCode::Ok
+        let agent = agent_create_wrap(
+            IC_PATH.as_ptr() as *const c_char,
+            identity,
+            IdentityType::Anonym,
+            II_CANISTER_ID_BYTES.as_ptr(),
+            II_CANISTER_ID_BYTES.len() as i32,
+            II_DID_CONTENT_BYTES.as_ptr() as *mut c_char,
+            error_ret,
         );
 
-        let mut idl_ptr: *const c_void = std::ptr::null();
-
-        assert_eq!(
-            agent_query_wrap(
+        let ret =agent_query_wrap(
                 agent,
                 b"greet\0".as_ptr() as *const c_char,
                 b"(\"World\")\0".as_ptr() as *const c_char,
-                &mut idl_ptr,
                 error_ret,
-            ),
-            ResultCode::Ok
-        );
+            );
 
         unsafe {
-            let idl_boxed = Box::from_raw(idl_ptr as *mut IDLArgs);
+            let idl_boxed = Box::from_raw(ret as *mut IDLArgs);
             assert_eq!(EXPECTED, idl_boxed.to_string());
         }
     }
@@ -501,64 +505,46 @@ mod tests {
     #[test]
     fn test_agent_update() {
         const EXPECTED: &str = "(\"Hello, World!\")";
-        let mut identity: *const c_void = std::ptr::null();
-        identity_anonymous(&mut identity);
-        let mut agent: *const FFIAgent = std::ptr::null();
+        let identity = identity_anonymous();
 
-        assert_eq!(
-            agent_create_wrap(
-                IC_PATH.as_ptr() as *const c_char,
-                identity,
-                IdentityType::Anonym,
-                II_CANISTER_ID_BYTES.as_ptr(),
-                II_CANISTER_ID_BYTES.len() as c_int,
-                II_DID_CONTENT_BYTES.as_ptr() as *const c_char,
-                &mut agent,
-                error_ret
-            ),
-            ResultCode::Ok
+        let agent = agent_create_wrap(
+            IC_PATH.as_ptr() as *const c_char,
+            identity,
+            IdentityType::Anonym,
+            II_CANISTER_ID_BYTES.as_ptr(),
+            II_CANISTER_ID_BYTES.len() as i32,
+            II_DID_CONTENT_BYTES.as_ptr() as *mut c_char,
+            error_ret,
         );
 
-        let mut idl_ptr: *const c_void = std::ptr::null();
-
-        assert_eq!(
-            agent_update_wrap(
+        let ret =agent_update_wrap(
                 agent,
                 b"greet\0".as_ptr() as *const c_char,
                 b"(\"World\")\0".as_ptr() as *const c_char,
-                &mut idl_ptr,
                 error_ret,
-            ),
-            ResultCode::Ok
-        );
+            );
 
         unsafe {
-            let idl_boxed = Box::from_raw(idl_ptr as *mut IDLArgs);
+            let idl_boxed = Box::from_raw(ret as *mut IDLArgs);
             assert_eq!(EXPECTED, idl_boxed.to_string());
         }
     }
 
     #[test]
     fn test_agent_status() {
-        let mut identity: *const c_void = std::ptr::null();
-        identity_anonymous(&mut identity);
-        let mut agent: *const FFIAgent = std::ptr::null();
+        let identity = identity_anonymous();
 
-        assert_eq!(
-            agent_create_wrap(
-                IC_PATH.as_ptr() as *const c_char,
-                identity,
-                IdentityType::Anonym,
-                II_CANISTER_ID_BYTES.as_ptr(),
-                II_CANISTER_ID_BYTES.len() as c_int,
-                II_DID_CONTENT_BYTES.as_ptr() as *const c_char,
-                &mut agent,
-                error_ret
-            ),
-            ResultCode::Ok
+        let agent = agent_create_wrap(
+            IC_PATH.as_ptr() as *const c_char,
+            identity,
+            IdentityType::Anonym,
+            II_CANISTER_ID_BYTES.as_ptr(),
+            II_CANISTER_ID_BYTES.len() as i32,
+            II_DID_CONTENT_BYTES.as_ptr() as *mut c_char,
+            error_ret,
         );
 
-        assert_eq!(agent_status_wrap(agent, ret, error_ret), ResultCode::Ok);
+        let status =  agent_status_wrap(agent, error_ret);
 
         unsafe {
             let id = Box::from_raw(identity as *mut AnonymousIdentity);
@@ -569,8 +555,7 @@ mod tests {
             assert_eq!(agent_ptr.identity.sender(), id.sender());
             assert_eq!(
                 agent_ptr.canister_id,
-                Principal::from_slice(II_CANISTER_ID_BYTES)
-            );
+                Principal::from_slice(II_CANISTER_ID_BYTES));
             assert_eq!(agent_ptr.did_content, cbytes_to_str(II_DID_CONTENT_BYTES));
         }
     }

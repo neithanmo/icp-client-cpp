@@ -15,12 +15,12 @@
 ********************************************************************************/
 #![allow(non_snake_case)]
 
-use std::{ffi::{c_char, CStr}};
-use cty::{c_void, c_int};
+use std::{ffi::{c_char, CStr, CString}};
+use cty::{c_int};
 use ic_agent::{identity::{AnonymousIdentity, BasicIdentity, Secp256k1Identity}, Identity, Signature};
 use k256::SecretKey;
 use ring::signature::Ed25519KeyPair;
-use crate::{AnyErr, ResultCode, RetPtr};
+use crate::{AnyErr, RetPtr};
 
 
 #[allow(dead_code)]
@@ -44,20 +44,17 @@ pub extern "C" fn identity_type(id_type: IdentityType) -> IdentityType{
 
 /// The anonymous identity.
 #[no_mangle]
-pub extern "C" fn identity_anonymous(identity_ret: *mut *const c_void){
+pub extern "C" fn identity_anonymous( ) -> *mut c_char {
     let anonymous_id = Box::new(AnonymousIdentity {});
-    let identity: *const c_void = Box::into_raw(anonymous_id) as *const c_void;
-    unsafe {
-        *identity_ret = identity;
-    }
+    let identity: *mut c_char = Box::into_raw(anonymous_id) as *mut c_char;
+    identity
 }
 
 /// Create a BasicIdentity from reading a PEM Content
 #[no_mangle]
 pub extern "C" fn identity_basic_from_pem(
     pem_data: *const c_char,
-    identity_ret: *mut *const c_void,
-    error_ret: RetPtr<u8>) -> ResultCode {
+    error_ret: RetPtr<u8>) -> *mut c_char {
 
     let pem_cstr = unsafe {
         assert!(!pem_data.is_null());
@@ -69,18 +66,26 @@ pub extern "C" fn identity_basic_from_pem(
 
     match basic_id {
         Ok(identity) => {
-            let identity_tmp: *const c_void = Box::into_raw(Box::new(identity)) as *const c_void;
-            unsafe {
-                *identity_ret = identity_tmp;
-            }
-            ResultCode::Ok
+            // Pass empty error string to error_ret
+            let empty_error = CString::new("").expect("Failed to create empty CString");
+            let error_str = empty_error.into_raw() as *const u8;
+            let error_len = 0;
+            error_ret(error_str, error_len);
+            
+            let identity_tmp: *mut c_char = Box::into_raw(Box::new(identity)) as *mut c_char;
+            identity_tmp
         }
         Err(e) => {
-            let err_str = e.to_string() + "\0";
-            let arr = err_str.as_bytes();
-            let len = arr.len() as c_int;
-            error_ret(arr.as_ptr(), len);
-            ResultCode::Err
+            let err_str = e.to_string();
+            let c_string = CString::new(err_str.clone()).expect("Failed to convert to CString");
+
+            // Pass error string to error_ret
+            let error_str = c_string.into_raw()  as *const u8;
+            let error_len = err_str.len() as c_int;
+            error_ret(error_str, error_len);
+
+            let empty_string = CString::new("").expect("Failed to create empty CString");
+            empty_string.into_raw()
         }
     }
 }
@@ -91,38 +96,43 @@ pub extern "C" fn identity_basic_from_pem(
 pub extern "C" fn identity_basic_from_key_pair(
     public_key: *const u8,
     private_key_seed: *const u8,
-    identity_ret: *mut *const c_void,
-    error_ret: RetPtr<u8>) -> ResultCode {
+    error_ret: RetPtr<u8>) -> *mut c_char {
 
     let public_key_slice =  unsafe {std::slice::from_raw_parts(public_key as *const u8, 32)};
     let private_key_seed_slice =  unsafe {std::slice::from_raw_parts(private_key_seed as *const u8, 32)};
 
     match Ed25519KeyPair::from_seed_and_public_key(private_key_seed_slice, public_key_slice) {
         Ok(key_pair) => {
+            // Pass empty error string to error_ret
+            let empty_error = CString::new("").expect("Failed to create empty CString");
+            let error_str = empty_error.into_raw() as *const u8;
+            let error_len = 0;
+            error_ret(error_str, error_len);
+
             let basic_id = BasicIdentity::from_key_pair(key_pair);
-            let identity_tmp: *const c_void = Box::into_raw(Box::new(basic_id)) as *const c_void;
-            unsafe {
-                *identity_ret = identity_tmp;
-            }
-            ResultCode::Ok
+            let identity_tmp: *mut c_char = Box::into_raw(Box::new(basic_id)) as *mut c_char;
+            identity_tmp
         }
         Err(e) => {
-            let err_str = e.to_string() + "\0";
-            let arr = err_str.as_bytes();
-            let len = arr.len() as c_int;
-            error_ret(arr.as_ptr(), len);
-            ResultCode::Err
+            let err_str = e.to_string();
+            let c_string = CString::new(err_str.clone()).expect("Failed to convert to CString");
+
+            // Pass error string to error_ret
+            let error_str = c_string.into_raw()  as *const u8;
+            let error_len = err_str.len() as c_int;
+            error_ret(error_str, error_len);
+
+            let empty_string = CString::new("").expect("Failed to create empty CString");
+            empty_string.into_raw()
         }
-    };
-    ResultCode::Ok
+    }
 }
 
 /// Creates an identity from a PEM certificate.
 #[no_mangle]
 pub extern "C" fn identity_secp256k1_from_pem(
     pem_data: *const c_char,
-    identity_ret: *mut *const c_void,
-    error_ret: RetPtr<u8>) -> ResultCode {
+    error_ret: RetPtr<u8>) -> *mut c_char {
 
     let pem_cstr = unsafe {
         assert!(!pem_data.is_null());
@@ -134,18 +144,25 @@ pub extern "C" fn identity_secp256k1_from_pem(
 
     match basic_id {
         Ok(identity) => {
-            let identity_tmp: *const c_void = Box::into_raw(Box::new(identity)) as *const c_void;
-            unsafe {
-                *identity_ret = identity_tmp;
-            }
-            ResultCode::Ok
+            // Pass empty error string to error_ret
+            let empty_error = CString::new("").expect("Failed to create empty CString");
+            let error_str = empty_error.into_raw() as *const u8;
+            let error_len = 0;
+            error_ret(error_str, error_len);
+            let identity_tmp: *mut c_char = Box::into_raw(Box::new(identity)) as *mut c_char;
+            identity_tmp
         }
         Err(e) => {
-            let err_str = e.to_string() + "\0";
-            let arr = err_str.as_bytes();
-            let len = arr.len() as c_int;
-            error_ret(arr.as_ptr(), len);
-            ResultCode::Err
+            let err_str = e.to_string();
+            let c_string = CString::new(err_str.clone()).expect("Failed to convert to CString");
+
+            // Pass error string to error_ret
+            let error_str = c_string.into_raw()  as *const u8;
+            let error_len = err_str.len() as c_int;
+            error_ret(error_str, error_len);
+
+            let empty_string = CString::new("").expect("Failed to create empty CString");
+            empty_string.into_raw()
         }
     }
 }
@@ -154,28 +171,23 @@ pub extern "C" fn identity_secp256k1_from_pem(
 #[no_mangle]
 pub extern "C" fn identity_secp256k1_from_private_key(
     private_key: *const c_char,
-    pk_len: usize,
-    identity_ret: *mut *const c_void){
+    pk_len: usize) -> *mut c_char {
 
     let pk = unsafe { std::slice::from_raw_parts(private_key as *const u8, pk_len) };
     let pk = SecretKey::from_be_bytes(pk).unwrap();
 
     let anonymous_id = Box::new(Secp256k1Identity::from_private_key(pk));
-    let identity: *const c_void = Box::into_raw(anonymous_id) as *const c_void;
-    unsafe {
-        *identity_ret = identity;
-    }
+    let identity: *mut c_char = Box::into_raw(anonymous_id) as *mut c_char;
+    identity
 }
 
 /// Returns a sender, ie. the Principal ID that is used to sign a request.
 /// Only one sender can be used per request.
 #[no_mangle]
 pub extern "C" fn identity_sender(
-    id_ptr: *mut *const c_void,
+    id_ptr: *mut c_char,
     idType: IdentityType,
-    principal_ret: RetPtr<u8>,
-    error_ret: RetPtr<u8>,
-) -> ResultCode {
+    error_ret: RetPtr<u8>) -> *mut c_char {
 
     unsafe {
         match idType {
@@ -184,18 +196,28 @@ pub extern "C" fn identity_sender(
                 let principal = boxed.sender();
                     match principal {
                         Ok(principal) => {
-                            let arr = principal.as_ref();
-                            let len = arr.len() as c_int;
-                            principal_ret(arr.as_ptr(), len);
-                            ResultCode::Ok
+                            // Pass empty error string to error_ret
+                            let empty_error = CString::new("").expect("Failed to create empty CString");
+                            let error_str = empty_error.into_raw() as *const u8;
+                            let error_len = 0;
+                            error_ret(error_str, error_len);
+
+                            let c_string = CString::new(principal.as_slice()).expect("CString conversion failed.");
+                            let c_string_ptr = c_string.into_raw();
+                            c_string_ptr as *mut c_char
                         }
 
                         Err(e) => {
-                            let err_str = e.to_string() + "\0";
-                            let arr = err_str.as_bytes();
-                            let len = arr.len() as c_int;
-                            error_ret(arr.as_ptr(), len);
-                            ResultCode::Err
+                            let err_str = e.to_string();
+                            let c_string = CString::new(err_str.clone()).expect("Failed to convert to CString");
+
+                            // Pass error string to error_ret
+                            let error_str = c_string.into_raw()  as *const u8;
+                            let error_len = err_str.len() as c_int;
+                            error_ret(error_str, error_len);
+
+                            let empty_string = CString::new("").expect("Failed to create empty CString");
+                            empty_string.into_raw()
                         }
                     }
             }
@@ -204,18 +226,28 @@ pub extern "C" fn identity_sender(
                 let principal = boxed.sender();
                     match principal {
                         Ok(principal) => {
-                            let arr = principal.as_ref();
-                            let len = arr.len() as c_int;
-                            principal_ret(arr.as_ptr(), len);
-                            ResultCode::Ok
+                            // Pass empty error string to error_ret
+                            let empty_error = CString::new("").expect("Failed to create empty CString");
+                            let error_str = empty_error.into_raw() as *const u8;
+                            let error_len = 0;
+                            error_ret(error_str, error_len);
+
+                            let c_string = CString::new(principal.as_slice()).expect("CString conversion failed.");
+                            let c_string_ptr = c_string.into_raw();
+                            c_string_ptr as *mut c_char
                         }
 
                         Err(e) => {
-                            let err_str = e.to_string() + "\0";
-                            let arr = err_str.as_bytes();
-                            let len = arr.len() as c_int;
-                            error_ret(arr.as_ptr(), len);
-                            ResultCode::Err
+                            let err_str = e.to_string();
+                            let c_string = CString::new(err_str.clone()).expect("Failed to convert to CString");
+
+                            // Pass error string to error_ret
+                            let error_str = c_string.into_raw()  as *const u8;
+                            let error_len = err_str.len() as c_int;
+                            error_ret(error_str, error_len);
+
+                            let empty_string = CString::new("").expect("Failed to create empty CString");
+                            empty_string.into_raw()
                         }
                     }
             }
@@ -224,18 +256,28 @@ pub extern "C" fn identity_sender(
                 let principal = boxed.sender();
                     match principal {
                         Ok(principal) => {
-                            let arr = principal.as_ref();
-                            let len = arr.len() as c_int;
-                            principal_ret(arr.as_ptr(), len);
-                            ResultCode::Ok
+                            // Pass empty error string to error_ret
+                            let empty_error = CString::new("").expect("Failed to create empty CString");
+                            let error_str = empty_error.into_raw() as *const u8;
+                            let error_len = 0;
+                            error_ret(error_str, error_len);
+
+                            let c_string = CString::new(principal.as_slice()).expect("CString conversion failed.");
+                            let c_string_ptr = c_string.into_raw();
+                            c_string_ptr as *mut c_char
                         }
 
                         Err(e) => {
-                            let err_str = e.to_string() + "\0";
-                            let arr = err_str.as_bytes();
-                            let len = arr.len() as c_int;
-                            error_ret(arr.as_ptr(), len);
-                            ResultCode::Err
+                            let err_str = e.to_string();
+                            let c_string = CString::new(err_str.clone()).expect("Failed to convert to CString");
+
+                            // Pass error string to error_ret
+                            let error_str = c_string.into_raw()  as *const u8;
+                            let error_len = err_str.len() as c_int;
+                            error_ret(error_str, error_len);
+
+                            let empty_string = CString::new("").expect("Failed to create empty CString");
+                            empty_string.into_raw()
                         }
                     }
             }
@@ -249,12 +291,11 @@ pub extern "C" fn identity_sender(
 pub extern "C" fn identity_sign(
     bytes: *const u8,
     bytes_len: c_int,
-    id_ptr: *mut *const c_void,
+    id_ptr: *mut c_char,
     idType: IdentityType,
     pubkey_ret: RetPtr<u8>,
-    sig_ret: RetPtr<u8>,
     error_ret: RetPtr<u8>,
-) -> ResultCode {
+) -> *mut c_char {
 
     unsafe {
         match idType {
@@ -268,6 +309,12 @@ pub extern "C" fn identity_sign(
                         public_key,
                         signature,
                     }) => {
+                        // Pass empty error string to error_ret
+                        let empty_error = CString::new("").expect("Failed to create empty CString");
+                        let error_str = empty_error.into_raw() as *const u8;
+                        let error_len = 0;
+                        error_ret(error_str, error_len);
+
                         let public_key = public_key.unwrap_or_default();
                         let signature = signature.unwrap_or_default();
 
@@ -275,17 +322,21 @@ pub extern "C" fn identity_sign(
                         let len = arr.len() as c_int;
                         pubkey_ret(arr.as_ptr(), len);
 
-                        let arr = signature.as_slice();
-                        let len = arr.len() as c_int;
-                        sig_ret(arr.as_ptr(), len);
-                        ResultCode:: Ok
+                        let c_string = CString::new(signature.as_slice()).expect("CString conversion failed.");
+                        let c_string_ptr = c_string.into_raw();
+                        c_string_ptr as *mut c_char
                     }
                     Err(err) => {
-                        let err_str = err.to_string() + "\0";
-                        let arr = err_str.as_bytes();
-                        let len = arr.len() as c_int;
-                        error_ret(arr.as_ptr(), len);
-                        ResultCode::Err
+                        let err_str = err.to_string();
+                        let c_string = CString::new(err_str.clone()).expect("Failed to convert to CString");
+
+                        // Pass error string to error_ret
+                        let error_str = c_string.into_raw()  as *const u8;
+                        let error_len = err_str.len() as c_int;
+                        error_ret(error_str, error_len);
+
+                        let empty_string = CString::new("").expect("Failed to create empty CString");
+                        empty_string.into_raw()
                     }
                 }
             }
@@ -299,6 +350,12 @@ pub extern "C" fn identity_sign(
                         public_key,
                         signature,
                     }) => {
+                        // Pass empty error string to error_ret
+                        let empty_error = CString::new("").expect("Failed to create empty CString");
+                        let error_str = empty_error.into_raw() as *const u8;
+                        let error_len = 0;
+                        error_ret(error_str, error_len);
+
                         let public_key = public_key.unwrap_or_default();
                         let signature = signature.unwrap_or_default();
 
@@ -306,17 +363,21 @@ pub extern "C" fn identity_sign(
                         let len = arr.len() as c_int;
                         pubkey_ret(arr.as_ptr(), len);
 
-                        let arr = signature.as_slice();
-                        let len = arr.len() as c_int;
-                        sig_ret(arr.as_ptr(), len);
-                        ResultCode:: Ok
+                        let c_string = CString::new(signature.as_slice()).expect("CString conversion failed.");
+                        let c_string_ptr = c_string.into_raw();
+                        c_string_ptr as *mut c_char
                     }
                     Err(err) => {
-                        let err_str = err.to_string() + "\0";
-                        let arr = err_str.as_bytes();
-                        let len = arr.len() as c_int;
-                        error_ret(arr.as_ptr(), len);
-                        ResultCode::Err
+                        let err_str = err.to_string();
+                        let c_string = CString::new(err_str.clone()).expect("Failed to convert to CString");
+
+                        // Pass error string to error_ret
+                        let error_str = c_string.into_raw()  as *const u8;
+                        let error_len = err_str.len() as c_int;
+                        error_ret(error_str, error_len);
+
+                        let empty_string = CString::new("").expect("Failed to create empty CString");
+                        empty_string.into_raw()
                     }
                 }
             }
@@ -330,6 +391,12 @@ pub extern "C" fn identity_sign(
                         public_key,
                         signature,
                     }) => {
+                        // Pass empty error string to error_ret
+                        let empty_error = CString::new("").expect("Failed to create empty CString");
+                        let error_str = empty_error.into_raw() as *const u8;
+                        let error_len = 0;
+                        error_ret(error_str, error_len);
+
                         let public_key = public_key.unwrap_or_default();
                         let signature = signature.unwrap_or_default();
 
@@ -337,17 +404,21 @@ pub extern "C" fn identity_sign(
                         let len = arr.len() as c_int;
                         pubkey_ret(arr.as_ptr(), len);
 
-                        let arr = signature.as_slice();
-                        let len = arr.len() as c_int;
-                        sig_ret(arr.as_ptr(), len);
-                        ResultCode:: Ok
+                        let c_string = CString::new(signature.as_slice()).expect("CString conversion failed.");
+                        let c_string_ptr = c_string.into_raw();
+                        c_string_ptr as *mut c_char
                     }
                     Err(err) => {
-                        let err_str = err.to_string() + "\0";
-                        let arr = err_str.as_bytes();
-                        let len = arr.len() as c_int;
-                        error_ret(arr.as_ptr(), len);
-                        ResultCode::Err
+                        let err_str = err.to_string();
+                        let c_string = CString::new(err_str.clone()).expect("Failed to convert to CString");
+
+                        // Pass error string to error_ret
+                        let error_str = c_string.into_raw()  as *const u8;
+                        let error_len = err_str.len() as c_int;
+                        error_ret(error_str, error_len);
+
+                        let empty_string = CString::new("").expect("Failed to create empty CString");
+                        empty_string.into_raw()
                     }
                 }
             }
@@ -355,6 +426,12 @@ pub extern "C" fn identity_sign(
     }
 }
 
+#[no_mangle]
+pub extern "C" fn identity_free(ptr: *mut c_char) {
+    let boxed = unsafe { Box::from_raw(ptr ) };
+
+    drop(boxed);
+}
 
 #[cfg(test)]
 mod tests {
@@ -379,9 +456,8 @@ N3d26cRxD99TPtm8uo2OuzKhSiq6EQ==
 
     #[test]
     fn test_identity_anonymous() {
-        let mut identity: *const c_void = std::ptr::null();
 
-        identity_anonymous(&mut identity);
+        let identity =identity_anonymous();
         assert!(!identity.is_null());
 
         unsafe {
@@ -392,63 +468,47 @@ N3d26cRxD99TPtm8uo2OuzKhSiq6EQ==
 
     #[test]
     fn test_identity_sender() {
-        const ANONYM_ID: [u8; 1] = [4u8];
-
-        let mut identity: *const c_void = std::ptr::null();
-
-        identity_anonymous(&mut identity);
-
-        extern "C" fn principal_ret(data: *const u8, len: c_int) {
-            let slice = unsafe { std::slice::from_raw_parts(data, len as usize) };
-
-            assert_eq!(slice, ANONYM_ID);
+        let identity = identity_anonymous();
+        unsafe {
+             let boxed = Box::from_raw(identity as *mut AnonymousIdentity);
+             assert_eq!(boxed.sender(), Ok(Principal::anonymous()));
         }
-
+        
         extern "C" fn error_ret(_data: *const u8, _len: c_int) {}
 
-
-        assert_eq!(identity_sender(&mut identity, IdentityType::Anonym, principal_ret, error_ret), ResultCode::Ok);
+        let principal = identity_sender(identity, IdentityType::Anonym, error_ret);
+        assert!(!principal.is_null());
     }
 
     #[test]
     fn test_identity_basic_from_pem() {
-        let mut identity: *const c_void = std::ptr::null();
 
         extern "C" fn error_ret(_data: *const u8, _len: c_int) {}
 
-        assert_eq!(
-            identity_basic_from_pem(
+        let id = identity_basic_from_pem(
                 BASIC_ID_FILE.as_ptr() as *const c_char,
-                &mut identity,
                 error_ret
-            ),
-            ResultCode::Ok,
-        );
+            );
+        assert!(!id.is_null());
 
         unsafe {
-            let boxed = Box::from_raw(identity as *mut BasicIdentity);
+            let boxed = Box::from_raw(id as *mut BasicIdentity);
             let basic = BasicIdentity::from_pem(BASIC_ID_FILE.as_bytes()).unwrap();
             assert_eq!(boxed.sender(), basic.sender());
         }
     }
 
-        #[test]
+    #[test]
     fn test_identity_secp256k1_from_pem() {
-        let mut identity: *const c_void = std::ptr::null();
-
         extern "C" fn error_ret(_data: *const u8, _len: c_int) {}
 
-        assert_eq!(
-            identity_secp256k1_from_pem(
+        let id = identity_secp256k1_from_pem(
                 SECP256K1_ID_FILE.as_ptr() as *const c_char,
-                &mut identity,
                 error_ret
-            ),
-            ResultCode::Ok,
-        );
+            );
 
         unsafe {
-            let boxed = Box::from_raw(identity as *mut Secp256k1Identity);
+            let boxed = Box::from_raw(id as *mut Secp256k1Identity);
             let secp = Secp256k1Identity::from_pem(SECP256K1_ID_FILE.as_bytes()).unwrap();
             assert_eq!(boxed.sender(), secp.sender());
         }

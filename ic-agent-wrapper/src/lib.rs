@@ -1,3 +1,4 @@
+use std::ffi::c_int;
 /*******************************************************************************
 *   (c) 2018 - 2023 Zondax AG
 *
@@ -13,7 +14,6 @@
 *  See the License for the specific language governing permissions and
 *  limitations under the License.
 ********************************************************************************/
-use std::{ffi::c_int};
 use anyhow::Error as AnyErr;
 use anyhow::Result as AnyResult;
 
@@ -25,13 +25,3 @@ mod candid;
 
 /// Ptr creation with size and len
 type RetPtr<T> = extern "C" fn(*const T, c_int);
-
-/// Return for FFI functions
-#[repr(i32)]
-#[derive(Debug, Eq, PartialEq, Copy, Clone, Hash)]
-pub enum ResultCode {
-    /// Ok
-    Ok = 0,
-    /// Error
-    Err = -1,
-}
