@@ -21,6 +21,8 @@ endif()
 
 # Set Rust library path
 set(IC_AGENT_WRAPPER_LIB "${CMAKE_CURRENT_SOURCE_DIR}/ic-agent-wrapper/target/release/libic_agent_wrapper.a")
+set(BINDING_FILE "${CMAKE_CURRENT_SOURCE_DIR}/ic-agent-wrapper/bindings.h")
+set(OUT_BINDING_FILE "${CMAKE_CURRENT_SOURCE_DIR}/lib-agent-c/src/bindings.h")
 
 # Compile Rust library in ic-agent-wrapper using cargo build
 add_custom_command(
@@ -46,6 +48,7 @@ add_dependencies(ic_agent_wrapper ic_agent_wrapper_build)
 # Compile every C file in lib-agent-c/src into a static library
 file(GLOB LIB_AGENT_C_SRC "lib-agent-c/src/*.c")
 add_library(agent_c STATIC ${LIB_AGENT_C_SRC})
+configure_file(${BINDING_FILE} ${OUT_BINDING_FILE} COPYONLY)
 
 # Compile every example in examples/
 file(GLOB EXAMPLE_DIRS "examples/*")
